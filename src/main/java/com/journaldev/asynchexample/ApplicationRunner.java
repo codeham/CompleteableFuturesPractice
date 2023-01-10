@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
+import java.io.FileNotFoundException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -27,17 +28,18 @@ public class ApplicationRunner implements CommandLineRunner {
         List<CompletableFuture<Void>> completableFutures = new ArrayList<>();
         List<ImageDownloadReq> downloadReqs = new ArrayList<>();
 
-        for(int i = 0; i < 200; i++){
+        for(int i = 0; i < 20; i++){
             ImageDownloadReq imageDownloadReq = new ImageDownloadReq("https://..com/img.jpg_" + i, "/s3path/path");
             downloadReqs.add(imageDownloadReq);
         }
 
         for(ImageDownloadReq downloadReq: downloadReqs){
             CompletableFuture<Void> completableFuture = CompletableFuture.supplyAsync(() -> {
-                try{
+                try {
                     return downloadService.downloadFromUrl(downloadReq.getUrl());
-                }catch (Exception e){}
-                return null;
+                } catch (InterruptedException e) {
+                    throw new RuntimeException(e);
+                }
             }).thenApply(result -> {
                 Boolean resultScan = downloadService.virusScanByteArray(result);
                 if(resultScan){
@@ -49,16 +51,25 @@ public class ApplicationRunner implements CommandLineRunner {
                 }
                 return null;
             }).thenAccept((result) -> {
-                try{
-                    downloadService.uploadToS3(result);
-                }catch(Exception e){}
+                downloadService.uploadToS3(result);
+            }).exceptionally(e -> {
+                e.printStackTrace();
+                return null;
             }).thenRunAsync(() -> {
                 ImageDownloadRes imageDownloadRes =
                         new ImageDownloadRes(downloadReq.getUrl(), downloadReq.getS3Path(), true);
                 downloadService.pushToQueueAsync(imageDownloadRes);
-            }).exceptionally(e -> {
-                System.out.println(e.getMessage());
-                return null;
+            }).thenRun(() -> {
+                try {
+                    downloadService.throwFileNotFoundException();
+                } catch (FileNotFoundException e) {
+                    throw new RuntimeException(e);
+                }
+            })
+            .thenRun(() -> {
+                downloadService.throwThrowable();
+            }).thenRun(() -> {
+                LOG.info("Ran after exception was thrown !");
             });
 
             completableFutures.add(completableFuture);
